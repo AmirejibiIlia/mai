@@ -1,15 +1,15 @@
 from fastapi import FastAPI
-from anthropic import Anthropic
+from groq import Groq
 import os
 
 app = FastAPI()
-client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 @app.post("/query")
 def query(question: str):
-    message = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=1024,
-        messages=[{"role": "user", "content": question}]
+    completion = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[{"role": "user", "content": question}],
+        max_tokens=1024
     )
-    return {"answer": message.content[0].text}
+    return {"answer": completion.choices[0].message.content}
