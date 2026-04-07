@@ -61,7 +61,7 @@ def planner(state: AgentState) -> AgentState:
 
     prompt = f"""{history_ctx}New question: {state['question']}
 
-Can this question be fully and accurately answered using only the conversation history above, without querying the database?
+The question may be in Georgian or English. Can it be fully and accurately answered using only the conversation history above, without querying the database?
 
 Reply with only DATABASE or HISTORY."""
 
@@ -77,7 +77,7 @@ def select_schema(state: AgentState) -> AgentState:
 
     prompt = f"""{history_ctx}Current question: {state['question']}
 
-You are a database expert. Identify the minimum tables and columns needed to answer the current question (use conversation history only to understand references like "that", "it", "the same").
+You are a database expert. The question and data may be in Georgian. Identify the minimum tables and columns needed to answer the current question (use conversation history only to understand references like "that", "it", "the same" or their Georgian equivalents).
 
 Available schema:
 {json.dumps(tables, ensure_ascii=False)}
@@ -117,8 +117,8 @@ Schema: {json.dumps(state['schema'], ensure_ascii=False)}
 
 STRICT RULES — violating these will cause the query to fail:
 - Use ONLY column names that exist in the schema above. NEVER invent column names.
-- Use ONLY values that appear in the sample values lists above. NEVER invent, capitalize, or rephrase values.
-- Use conversation history only to resolve what "them", "it", "same" etc. refer to.
+- Use ONLY values that appear in the sample values lists above. Copy them character-for-character — including Georgian script. NEVER translate, transliterate, or rephrase values.
+- Use conversation history only to resolve what "them", "it", "same" or their Georgian equivalents refer to.
 - For comparisons or multi-part questions, return all relevant grouped data — the answer agent will synthesize the final response from the rows.
 - For comparisons, use GROUP BY or CASE WHEN aggregations — never UNION.
 - Return ONLY the SQL query, no explanation.
@@ -137,7 +137,7 @@ def validate_sql(state: AgentState) -> AgentState:
     prompt = f"""{history_ctx}Current question: {state['question']}
 SQL: {state['sql']}
 
-Does this SQL return data that is sufficient to answer the current question (even if the final answer requires summing or interpreting the rows)? Reply with only YES or NO."""
+The question and data may be in Georgian. Does this SQL return data that is sufficient to answer the current question (even if the final answer requires summing or interpreting the rows)? Reply with only YES or NO."""
 
     response = llm.invoke(prompt)
     state["valid"] = "YES" in response.content.upper()
@@ -183,7 +183,7 @@ def format_answer(state: AgentState) -> AgentState:
     if state["plan"] == "history":
         prompt = f"""{history_ctx}Question: {state['question']}
 
-Answer this question using only the conversation history above. Be concise and direct."""
+Answer this question using only the conversation history above. Be concise and direct. Respond in the same language as the question (Georgian or English)."""
         response = llm.invoke(prompt)
         state["answer"] = response.content.strip()
         return state
@@ -196,7 +196,7 @@ Answer this question using only the conversation history above. Be concise and d
 Results: {json.dumps(state['rows'][:10], default=str, ensure_ascii=False)}
 
 Answer the current question clearly and concisely based on the results.
-Give a short, direct answer in the same language as the question."""
+Give a short, direct answer in the same language as the question (Georgian or English). Do not translate Georgian values in the results — use them as-is when referencing them."""
 
     response = llm.invoke(prompt)
     state["answer"] = response.content.strip()

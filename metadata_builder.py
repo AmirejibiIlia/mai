@@ -6,11 +6,12 @@ import os
 load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL", "").replace("postgresql://", "postgresql+pg8000://", 1).replace("postgres://", "postgresql+pg8000://", 1)
+_ENGINE_ARGS = {"connect_args": {"client_encoding": "utf8"}}
 
 
 def ensure_metadata_table():
     """Create metadata table if it doesn't exist"""
-    engine = create_engine(DATABASE_URL)
+    engine = create_engine(DATABASE_URL, **_ENGINE_ARGS)
     with engine.connect() as conn:
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS company_metadata (
@@ -25,7 +26,7 @@ def ensure_metadata_table():
 
 def get_all_tables():
     """Get all tables except metadata table"""
-    engine = create_engine(DATABASE_URL)
+    engine = create_engine(DATABASE_URL, **_ENGINE_ARGS)
     inspector = inspect(engine)
     tables = inspector.get_table_names()
     return [t for t in tables if t != 'company_metadata']
@@ -161,7 +162,7 @@ def main():
     """Main workflow"""
     
     print("🔍 Connecting to database...\n")
-    engine = create_engine(DATABASE_URL)
+    engine = create_engine(DATABASE_URL, **_ENGINE_ARGS)
     
     # Ensure metadata table exists
     ensure_metadata_table()

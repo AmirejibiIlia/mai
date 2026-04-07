@@ -10,11 +10,19 @@ settings = get_settings()
 
 _db_url = settings.DATABASE_URL.replace("postgresql://", "postgresql+pg8000://", 1).replace("postgres://", "postgresql+pg8000://", 1)
 
+from sqlalchemy import event
+
 engine = create_engine(
     _db_url,
     poolclass=NullPool,
     connect_args={"timeout": 10}
 )
+
+@event.listens_for(engine, "connect")
+def set_utf8(dbapi_conn, _):
+    cursor = dbapi_conn.cursor()
+    cursor.execute("SET client_encoding = 'UTF8'")
+    cursor.close()
 
 @contextmanager
 def get_db():
