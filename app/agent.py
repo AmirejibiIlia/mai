@@ -119,6 +119,7 @@ STRICT RULES — violating these will cause the query to fail:
 - Use ONLY column names that exist in the schema above. NEVER invent column names.
 - Use ONLY values that appear in the sample values lists above. NEVER invent, capitalize, or rephrase values.
 - Use conversation history only to resolve what "them", "it", "same" etc. refer to.
+- For comparisons or multi-part questions, return all relevant grouped data — the answer agent will synthesize the final response from the rows.
 - For comparisons, use GROUP BY or CASE WHEN aggregations — never UNION.
 - Return ONLY the SQL query, no explanation.
 
@@ -136,7 +137,7 @@ def validate_sql(state: AgentState) -> AgentState:
     prompt = f"""{history_ctx}Current question: {state['question']}
 SQL: {state['sql']}
 
-Does this SQL correctly answer the current question? Reply with only YES or NO."""
+Does this SQL return data that is sufficient to answer the current question (even if the final answer requires summing or interpreting the rows)? Reply with only YES or NO."""
 
     response = llm.invoke(prompt)
     state["valid"] = "YES" in response.content.upper()
