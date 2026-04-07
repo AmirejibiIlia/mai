@@ -13,6 +13,7 @@ class AgentState(TypedDict):
     company_id: str
     question: str
     history: list
+    plan: str           # "database" or "history"
     metadata: dict
     schema: dict
     sql: str
@@ -41,7 +42,6 @@ def _extract_json(text: str) -> str:
 
 
 def _format_history(history: list) -> str:
-    """Format last 6 messages as readable context block."""
     if not history:
         return ""
     lines = ["Conversation history:"]
@@ -51,8 +51,27 @@ def _format_history(history: list) -> str:
     return "\n".join(lines) + "\n\n"
 
 
+def planner(state: AgentState) -> AgentState:
+    """Decide whether to answer from conversation history or query the database."""
+    if not state["history"]:
+        state["plan"] = "database"
+        return state
+
+    history_ctx = _format_history(state["history"])
+
+    prompt = f"""{history_ctx}New question: {state['question']}
+
+Can this question be fully and accurately answered using only the conversation history above, without querying the database?
+
+Reply with only DATABASE or HISTORY."""
+
+    response = llm.invoke(prompt)
+    state["plan"] = "history" if "HISTORY" in response.content.upper() else "database"
+    return state
+
+
 def select_schema(state: AgentState) -> AgentState:
-    """Agent 1: Pick only the tables and columns needed to answer the question."""
+    """Agent: Pick only the tables and columns needed to answer the question."""
     tables = state["metadata"].get("tables", {})
     history_ctx = _format_history(state["history"])
 
@@ -88,7 +107,7 @@ JSON:"""
 
 
 def generate_sql(state: AgentState) -> AgentState:
-    """Agent 2: Generate an efficient SQL query from the focused schema."""
+    """Agent: Generate an efficient SQL query from the focused schema."""
     history_ctx = _format_history(state["history"])
 
     prompt = f"""{history_ctx}Current question: {state['question']}
@@ -96,11 +115,12 @@ def generate_sql(state: AgentState) -> AgentState:
 You are a SQL expert. Write a single efficient SELECT query to answer the current question.
 Schema: {json.dumps(state['schema'], ensure_ascii=False)}
 
-Rules:
-- Use exact table/column names from the schema
-- Match exact values from sample values where applicable
-- Use conversation history only to resolve references (e.g. "same period", "that category")
-- Return ONLY the SQL query, no explanation
+STRICT RULES — violating these will cause the query to fail:
+- Use ONLY column names that exist in the schema above. NEVER invent column names.
+- Use ONLY values that appear in the sample values lists above. NEVER invent, capitalize, or rephrase values.
+- Use conversation history only to resolve what "them", "it", "same" etc. refer to.
+- For comparisons, use GROUP BY or CASE WHEN aggregations — never UNION.
+- Return ONLY the SQL query, no explanation.
 
 SQL:"""
 
@@ -110,7 +130,7 @@ SQL:"""
 
 
 def validate_sql(state: AgentState) -> AgentState:
-    """Agent 3: Verify the SQL actually answers what the user asked."""
+    """Agent: Verify the SQL actually answers what the user asked."""
     history_ctx = _format_history(state["history"])
 
     prompt = f"""{history_ctx}Current question: {state['question']}
@@ -128,20 +148,23 @@ def execute_sql_node(state: AgentState) -> AgentState:
         state["rows"] = []
         return state
 
-    sql = state["sql"].rstrip(";")
     company_filter = state["metadata"]["company_filter"]
-    sql_upper = sql.upper()
 
-    if "WHERE" in sql_upper:
-        where_idx = sql_upper.index("WHERE")
-        sql = sql[:where_idx + 5] + f" {company_filter} AND" + sql[where_idx + 5:]
-    else:
-        insert_pos = len(sql)
+    def inject_filter(query: str) -> str:
+        q_upper = query.upper()
+        if "WHERE" in q_upper:
+            idx = q_upper.index("WHERE")
+            return query[:idx + 5] + f" {company_filter} AND" + query[idx + 5:]
+        insert_pos = len(query)
         for kw in ["GROUP BY", "ORDER BY", "HAVING", "LIMIT"]:
-            idx = sql_upper.find(kw)
+            idx = q_upper.find(kw)
             if idx != -1 and idx < insert_pos:
                 insert_pos = idx
-        sql = sql[:insert_pos].rstrip() + f" WHERE {company_filter} " + sql[insert_pos:]
+        return query[:insert_pos].rstrip() + f" WHERE {company_filter} " + query[insert_pos:]
+
+    # Handle UNION — inject filter into each SELECT part
+    parts = state["sql"].rstrip(";").split("UNION")
+    sql = " UNION ".join(inject_filter(p.strip()) for p in parts)
 
     try:
         state["rows"] = execute_query(sql, settings.QUERY_TIMEOUT)
@@ -154,11 +177,19 @@ def execute_sql_node(state: AgentState) -> AgentState:
 
 
 def format_answer(state: AgentState) -> AgentState:
+    history_ctx = _format_history(state["history"])
+
+    if state["plan"] == "history":
+        prompt = f"""{history_ctx}Question: {state['question']}
+
+Answer this question using only the conversation history above. Be concise and direct."""
+        response = llm.invoke(prompt)
+        state["answer"] = response.content.strip()
+        return state
+
     if not state["valid"] or not state["rows"]:
         state["answer"] = state.get("error") or "Could not answer the question with the available data."
         return state
-
-    history_ctx = _format_history(state["history"])
 
     prompt = f"""{history_ctx}Current question: {state['question']}
 Results: {json.dumps(state['rows'][:10], default=str, ensure_ascii=False)}
@@ -171,7 +202,11 @@ Give a short, direct answer in the same language as the question."""
     return state
 
 
-def route(state: AgentState) -> Literal["execute", "format"]:
+def route_plan(state: AgentState) -> Literal["select_schema", "format"]:
+    return "select_schema" if state["plan"] == "database" else "format"
+
+
+def route_validate(state: AgentState) -> Literal["execute", "format"]:
     return "execute" if state["valid"] else "format"
 
 
@@ -182,15 +217,17 @@ def get_graph():
     global _graph
     if _graph is None:
         workflow = StateGraph(AgentState)
+        workflow.add_node("planner", planner)
         workflow.add_node("select_schema", select_schema)
         workflow.add_node("generate_sql", generate_sql)
         workflow.add_node("validate", validate_sql)
         workflow.add_node("execute", execute_sql_node)
         workflow.add_node("format", format_answer)
-        workflow.set_entry_point("select_schema")
+        workflow.set_entry_point("planner")
+        workflow.add_conditional_edges("planner", route_plan, {"select_schema": "select_schema", "format": "format"})
         workflow.add_edge("select_schema", "generate_sql")
         workflow.add_edge("generate_sql", "validate")
-        workflow.add_conditional_edges("validate", route, {"execute": "execute", "format": "format"})
+        workflow.add_conditional_edges("validate", route_validate, {"execute": "execute", "format": "format"})
         workflow.add_edge("execute", "format")
         workflow.add_edge("format", END)
         _graph = workflow.compile()
@@ -202,6 +239,7 @@ def run(company_id: str, question: str, history: list = []) -> dict:
         "company_id": company_id,
         "question": question,
         "history": history,
+        "plan": "database",
         "metadata": load_metadata(company_id),
         "schema": {},
         "sql": "",
