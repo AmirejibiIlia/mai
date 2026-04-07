@@ -1,7 +1,8 @@
-from fastapi import FastAPI, Query, HTTPException
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from contextlib import asynccontextmanager
+from pydantic import BaseModel
 from .agent import run
 from .database import get_companies, engine
 from .config import get_settings
@@ -17,11 +18,7 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down...")
     engine.dispose()
 
-app = FastAPI(
-    title="AI SQL Agent",
-    version="1.0.0",
-    lifespan=lifespan
-)
+app = FastAPI(title="AI SQL Agent", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.add_middleware(
@@ -30,6 +27,11 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
+
+class QueryRequest(BaseModel):
+    company_id: str
+    question: str
+    history: list[dict] = []
 
 @app.get("/")
 def health():
@@ -40,14 +42,11 @@ def list_companies():
     return {"companies": get_companies()}
 
 @app.post("/query")
-def query(
-    company_id: str = Query(..., description="Company identifier"),
-    question: str = Query(..., min_length=1, description="Question in natural language")
-):
+def query(req: QueryRequest):
     try:
-        result = run(company_id, question)
+        result = run(req.company_id, req.question, req.history)
         return {
-            "company_id": company_id,
+            "company_id": req.company_id,
             "answer": result["answer"],
             "sql": result["sql"],
             "valid": result["valid"],

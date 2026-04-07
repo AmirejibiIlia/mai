@@ -12,6 +12,7 @@ llm = ChatGroq(api_key=settings.GROQ_API_KEY, model=settings.LLM_MODEL, temperat
 class AgentState(TypedDict):
     company_id: str
     question: str
+    history: list
     metadata: dict
     schema: dict
     sql: str
@@ -39,19 +40,30 @@ def _extract_json(text: str) -> str:
     return text.strip()
 
 
+def _format_history(history: list) -> str:
+    """Format last 6 messages as readable context block."""
+    if not history:
+        return ""
+    lines = ["Conversation history:"]
+    for msg in history[-6:]:
+        role = "User" if msg.get("role") == "user" else "Assistant"
+        lines.append(f"  {role}: {msg.get('content', '')}")
+    return "\n".join(lines) + "\n\n"
+
+
 def select_schema(state: AgentState) -> AgentState:
     """Agent 1: Pick only the tables and columns needed to answer the question."""
     tables = state["metadata"].get("tables", {})
+    history_ctx = _format_history(state["history"])
 
-    prompt = f"""You are a database expert. Identify the minimum tables and columns needed to answer the question.
+    prompt = f"""{history_ctx}Current question: {state['question']}
 
-Question: {state['question']}
+You are a database expert. Identify the minimum tables and columns needed to answer the current question (use conversation history only to understand references like "that", "it", "the same").
 
 Available schema:
 {json.dumps(tables, ensure_ascii=False)}
 
 Reply with a JSON object like: {{"table_name": ["col1", "col2"], ...}}
-Include only what is strictly necessary.
 
 JSON:"""
 
@@ -77,14 +89,17 @@ JSON:"""
 
 def generate_sql(state: AgentState) -> AgentState:
     """Agent 2: Generate an efficient SQL query from the focused schema."""
-    prompt = f"""You are a SQL expert. Write a single efficient SELECT query to answer the question.
+    history_ctx = _format_history(state["history"])
 
-Question: {state['question']}
+    prompt = f"""{history_ctx}Current question: {state['question']}
+
+You are a SQL expert. Write a single efficient SELECT query to answer the current question.
 Schema: {json.dumps(state['schema'], ensure_ascii=False)}
 
 Rules:
 - Use exact table/column names from the schema
 - Match exact values from sample values where applicable
+- Use conversation history only to resolve references (e.g. "same period", "that category")
 - Return ONLY the SQL query, no explanation
 
 SQL:"""
@@ -96,12 +111,12 @@ SQL:"""
 
 def validate_sql(state: AgentState) -> AgentState:
     """Agent 3: Verify the SQL actually answers what the user asked."""
-    prompt = f"""Does this SQL query correctly and completely answer the user's question?
+    history_ctx = _format_history(state["history"])
 
-Question: {state['question']}
+    prompt = f"""{history_ctx}Current question: {state['question']}
 SQL: {state['sql']}
 
-Reply with only YES or NO."""
+Does this SQL correctly answer the current question? Reply with only YES or NO."""
 
     response = llm.invoke(prompt)
     state["valid"] = "YES" in response.content.upper()
@@ -143,11 +158,12 @@ def format_answer(state: AgentState) -> AgentState:
         state["answer"] = state.get("error") or "Could not answer the question with the available data."
         return state
 
-    prompt = f"""Answer the user's question clearly and concisely based on the query results.
+    history_ctx = _format_history(state["history"])
 
-Question: {state['question']}
+    prompt = f"""{history_ctx}Current question: {state['question']}
 Results: {json.dumps(state['rows'][:10], default=str, ensure_ascii=False)}
 
+Answer the current question clearly and concisely based on the results.
 Give a short, direct answer in the same language as the question."""
 
     response = llm.invoke(prompt)
@@ -181,10 +197,11 @@ def get_graph():
     return _graph
 
 
-def run(company_id: str, question: str) -> dict:
+def run(company_id: str, question: str, history: list = []) -> dict:
     result = get_graph().invoke({
         "company_id": company_id,
         "question": question,
+        "history": history,
         "metadata": load_metadata(company_id),
         "schema": {},
         "sql": "",
