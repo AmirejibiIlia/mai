@@ -8,10 +8,12 @@ from .exceptions import CompanyNotFoundError
 
 settings = get_settings()
 
+_db_url = settings.DATABASE_URL.replace("postgresql://", "postgresql+pg8000://", 1).replace("postgres://", "postgresql+pg8000://", 1)
+
 engine = create_engine(
-    settings.DATABASE_URL,
+    _db_url,
     poolclass=NullPool,
-    connect_args={"connect_timeout": 10}
+    connect_args={"timeout": 10}
 )
 
 @contextmanager
