@@ -3,128 +3,197 @@ from langchain_groq import ChatGroq
 from typing import TypedDict, Literal
 from .config import get_settings
 from .database import load_metadata, execute_query
-from .exceptions import InvalidSQLError, QueryExecutionError
 import json
 
 settings = get_settings()
 llm = ChatGroq(api_key=settings.GROQ_API_KEY, model=settings.LLM_MODEL, temperature=settings.LLM_TEMPERATURE)
 
+
 class AgentState(TypedDict):
     company_id: str
     question: str
     metadata: dict
+    schema: dict
     sql: str
     valid: bool
     rows: list
     answer: str
     error: str | None
 
+
 def _clean_sql(sql: str) -> str:
     if "```" in sql:
-        sql = sql.split("```")[1]
+        parts = sql.split("```")
+        sql = parts[1] if len(parts) > 1 else parts[0]
         if sql.lower().startswith("sql"):
             sql = sql[3:]
     return sql.strip()
 
-def generate_sql(state: AgentState) -> AgentState:
-    prompt = f"""Database schema: {json.dumps(state['metadata'], ensure_ascii=False)}
+
+def _extract_json(text: str) -> str:
+    if "```" in text:
+        parts = text.split("```")
+        text = parts[1] if len(parts) > 1 else parts[0]
+        if text.lower().startswith("json"):
+            text = text[4:]
+    return text.strip()
+
+
+def select_schema(state: AgentState) -> AgentState:
+    """Agent 1: Pick only the tables and columns needed to answer the question."""
+    tables = state["metadata"].get("tables", {})
+
+    prompt = f"""You are a database expert. Identify the minimum tables and columns needed to answer the question.
+
 Question: {state['question']}
-Generate ONLY a SELECT query using exact values from schema.
+
+Available schema:
+{json.dumps(tables, ensure_ascii=False)}
+
+Reply with a JSON object like: {{"table_name": ["col1", "col2"], ...}}
+Include only what is strictly necessary.
+
+JSON:"""
+
+    response = llm.invoke(prompt)
+
+    try:
+        selected = json.loads(_extract_json(response.content))
+    except Exception:
+        selected = {t: list(cols["columns"].keys()) for t, cols in tables.items()}
+
+    focused = {}
+    for table, columns in selected.items():
+        if table not in tables:
+            continue
+        focused[table] = {
+            "columns": {c: tables[table]["columns"][c] for c in columns if c in tables[table]["columns"]},
+            "values": {c: tables[table]["values"][c] for c in columns if c in tables[table].get("values", {})}
+        }
+
+    state["schema"] = focused
+    return state
+
+
+def generate_sql(state: AgentState) -> AgentState:
+    """Agent 2: Generate an efficient SQL query from the focused schema."""
+    prompt = f"""You are a SQL expert. Write a single efficient SELECT query to answer the question.
+
+Question: {state['question']}
+Schema: {json.dumps(state['schema'], ensure_ascii=False)}
+
+Rules:
+- Use exact table/column names from the schema
+- Match exact values from sample values where applicable
+- Return ONLY the SQL query, no explanation
+
 SQL:"""
-    
+
     response = llm.invoke(prompt)
     state["sql"] = _clean_sql(response.content)
     return state
 
+
 def validate_sql(state: AgentState) -> AgentState:
-    prompt = f"""Is this SQL valid for the question?
+    """Agent 3: Verify the SQL actually answers what the user asked."""
+    prompt = f"""Does this SQL query correctly and completely answer the user's question?
+
 Question: {state['question']}
 SQL: {state['sql']}
-Reply: YES or NO
-Answer:"""
-    
+
+Reply with only YES or NO."""
+
     response = llm.invoke(prompt)
     state["valid"] = "YES" in response.content.upper()
     return state
+
 
 def execute_sql_node(state: AgentState) -> AgentState:
     if not state["valid"]:
         state["rows"] = []
         return state
-    
+
     sql = state["sql"].rstrip(";")
     company_filter = state["metadata"]["company_filter"]
-
-    # Find where WHERE/GROUP BY/ORDER BY/LIMIT/HAVING starts to inject filter safely
     sql_upper = sql.upper()
-    clause_keywords = ["GROUP BY", "ORDER BY", "LIMIT", "HAVING"]
 
     if "WHERE" in sql_upper:
-        sql = sql.replace(sql[sql_upper.index("WHERE"):sql_upper.index("WHERE")+5], f"WHERE {company_filter} AND", 1)
+        where_idx = sql_upper.index("WHERE")
+        sql = sql[:where_idx + 5] + f" {company_filter} AND" + sql[where_idx + 5:]
     else:
         insert_pos = len(sql)
-        for kw in clause_keywords:
+        for kw in ["GROUP BY", "ORDER BY", "HAVING", "LIMIT"]:
             idx = sql_upper.find(kw)
             if idx != -1 and idx < insert_pos:
                 insert_pos = idx
         sql = sql[:insert_pos].rstrip() + f" WHERE {company_filter} " + sql[insert_pos:]
-    
+
     try:
         state["rows"] = execute_query(sql, settings.QUERY_TIMEOUT)
     except Exception as e:
         state["error"] = str(e)
         state["valid"] = False
         state["rows"] = []
-    
+
     return state
 
+
 def format_answer(state: AgentState) -> AgentState:
-    if not state["valid"]:
-        state["answer"] = state.get("error", "Invalid SQL generated")
+    if not state["valid"] or not state["rows"]:
+        state["answer"] = state.get("error") or "Could not answer the question with the available data."
         return state
-    
-    prompt = f"""Question: {state['question']}
+
+    prompt = f"""Answer the user's question clearly and concisely based on the query results.
+
+Question: {state['question']}
 Results: {json.dumps(state['rows'][:10], default=str, ensure_ascii=False)}
-Provide a concise answer in the same language.
-Answer:"""
-    
+
+Give a short, direct answer in the same language as the question."""
+
     response = llm.invoke(prompt)
     state["answer"] = response.content.strip()
     return state
 
+
 def route(state: AgentState) -> Literal["execute", "format"]:
     return "execute" if state["valid"] else "format"
 
+
 _graph = None
+
 
 def get_graph():
     global _graph
     if _graph is None:
         workflow = StateGraph(AgentState)
-        workflow.add_node("generate", generate_sql)
+        workflow.add_node("select_schema", select_schema)
+        workflow.add_node("generate_sql", generate_sql)
         workflow.add_node("validate", validate_sql)
         workflow.add_node("execute", execute_sql_node)
         workflow.add_node("format", format_answer)
-        workflow.set_entry_point("generate")
-        workflow.add_edge("generate", "validate")
+        workflow.set_entry_point("select_schema")
+        workflow.add_edge("select_schema", "generate_sql")
+        workflow.add_edge("generate_sql", "validate")
         workflow.add_conditional_edges("validate", route, {"execute": "execute", "format": "format"})
         workflow.add_edge("execute", "format")
         workflow.add_edge("format", END)
         _graph = workflow.compile()
     return _graph
 
+
 def run(company_id: str, question: str) -> dict:
     result = get_graph().invoke({
         "company_id": company_id,
         "question": question,
         "metadata": load_metadata(company_id),
+        "schema": {},
         "sql": "",
         "valid": False,
         "rows": [],
         "answer": "",
         "error": None
     })
-    
+
     return {
         "answer": result["answer"],
         "sql": result["sql"],

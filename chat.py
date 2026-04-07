@@ -15,7 +15,7 @@ def ask(company_id: str, question: str):
     return data
 
 # Usage
-result = ask("Amadeo", "What is total revenue?")
+result = ask("Amadeo", "What was the main cost for the company?")
 print(result["answer"])
 print(f"SQL: {result['sql']}")
 print(f"Rows: {result['rows']}")
