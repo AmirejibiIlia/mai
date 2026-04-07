@@ -159,16 +159,9 @@ JSON:"""
 
 
 def validate_sql(state: AgentState) -> AgentState:
-    """Agent: Verify the SQL actually answers what the user asked."""
-    history_ctx = _format_history(state["history"])
-
-    prompt = f"""{history_ctx}Current question: {state['question']}
-SQL: {state['sql']}
-
-The question and data may be in Georgian. Does this SQL return data that is sufficient to answer the current question (even if the final answer requires summing or interpreting the rows)? Reply with only YES or NO."""
-
-    response = llm.invoke(prompt)
-    state["valid"] = "YES" in response.content.upper()
+    """Structural check only — always execute; errors are caught in execute_sql_node."""
+    sql = state["sql"].strip().upper()
+    state["valid"] = sql.startswith("SELECT") and "FROM" in sql
     return state
 
 
@@ -223,12 +216,23 @@ Answer this question using only the conversation history above. Be concise and d
 
     clarification_ctx = f"Note about query: {state['clarification']}\n" if state["clarification"] else ""
 
-    prompt = f"""{history_ctx}{clarification_ctx}Current question: {state['question']}
-Results: {json.dumps(state['rows'][:10], default=str, ensure_ascii=False)}
+    rows = state["rows"][:10]
+    # Pre-compute numeric totals to avoid LLM arithmetic errors
+    numeric_totals = {}
+    for row in rows:
+        for k, v in row.items():
+            try:
+                numeric_totals[k] = numeric_totals.get(k, 0) + float(v)
+            except (TypeError, ValueError):
+                pass
+    totals_ctx = f"Pre-computed column totals (use these exactly): {json.dumps(numeric_totals, default=str)}\n" if numeric_totals else ""
+
+    prompt = f"""{history_ctx}{clarification_ctx}{totals_ctx}Current question: {state['question']}
+Results: {json.dumps(rows, default=str, ensure_ascii=False)}
 
 Answer the current question clearly and concisely based on the results. Follow these rules:
 - If a substitution was made (see note above), start with: "I couldn't find '[original term]', but found '[substituted term]', so:"
-- If results contain multiple subcategories that together answer the question, list each one with its value, then provide the total. Example: "Your revenues include: Sales ($X), Services ($Y), Tech ($Z). Total: $W."
+- If results contain multiple subcategories that together answer the question, list each one with its value, then provide the total. Use the pre-computed totals above — do not recalculate.
 - Do not translate Georgian values — use them as-is.
 - Respond in the same language as the question (Georgian or English)."""
 
