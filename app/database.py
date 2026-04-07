@@ -47,3 +47,35 @@ def get_companies() -> List[str]:
     with get_db() as conn:
         result = conn.execute(text("SELECT company_id FROM company_metadata ORDER BY company_id"))
         return [row[0] for row in result]
+
+def create_logs_table():
+    with get_db() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS logs (
+                id SERIAL PRIMARY KEY,
+                company_id VARCHAR(255),
+                question TEXT,
+                answer TEXT,
+                rating INTEGER,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        """))
+        conn.commit()
+
+def insert_log(company_id: str, question: str, answer: str) -> int:
+    with get_db() as conn:
+        result = conn.execute(
+            text("INSERT INTO logs (company_id, question, answer) VALUES (:c, :q, :a) RETURNING id"),
+            {"c": company_id, "q": question, "a": answer}
+        )
+        log_id = result.fetchone()[0]
+        conn.commit()
+        return log_id
+
+def update_log_rating(log_id: int, rating: int):
+    with get_db() as conn:
+        conn.execute(
+            text("UPDATE logs SET rating = :r WHERE id = :id"),
+            {"r": rating, "id": log_id}
+        )
+        conn.commit()
