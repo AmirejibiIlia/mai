@@ -17,6 +17,7 @@ class AgentState(TypedDict):
     metadata: dict
     schema: dict
     sql: str
+    clarification: str  # note about fuzzy matches or substitutions
     valid: bool
     rows: list
     answer: str
@@ -107,26 +108,42 @@ JSON:"""
 
 
 def generate_sql(state: AgentState) -> AgentState:
-    """Agent: Generate an efficient SQL query from the focused schema."""
+    """Agent: Generate SQL and note any fuzzy value matches or substitutions."""
     history_ctx = _format_history(state["history"])
 
     prompt = f"""{history_ctx}Current question: {state['question']}
 
-You are a SQL expert. Write a single efficient SELECT query to answer the current question.
+You are a SQL expert. Analyze the question against the schema and produce a JSON response.
+
 Schema: {json.dumps(state['schema'], ensure_ascii=False)}
 
-STRICT RULES — violating these will cause the query to fail:
-- Use ONLY column names that exist in the schema above. NEVER invent column names.
-- Use ONLY values that appear in the sample values lists above. Copy them character-for-character — including Georgian script. NEVER translate, transliterate, or rephrase values.
-- Use conversation history only to resolve what "them", "it", "same" or their Georgian equivalents refer to.
-- For comparisons or multi-part questions, return all relevant grouped data — the answer agent will synthesize the final response from the rows.
-- For comparisons, use GROUP BY or CASE WHEN aggregations — never UNION.
-- Return ONLY the SQL query, no explanation.
+STRICT RULES:
+- Use ONLY column names that exist in the schema. NEVER invent column names.
+- Use ONLY values from the sample values lists. Copy them character-for-character — including Georgian script. NEVER translate, transliterate, or rephrase values.
+- If the user's term does not exactly match any schema value but is clearly a typo or synonym (e.g. "xpnses" → "expense", "income" → "revenue"), use the closest schema value and record the substitution.
+- For general questions (e.g. "how much revenue"), include ALL matching subcategories using GROUP BY — never filter to just one.
+- For comparisons, use GROUP BY or CASE WHEN — never UNION.
+- Use conversation history only to resolve references like "them", "it", "same".
 
-SQL:"""
+Reply with this JSON:
+{{
+  "sql": "<the SELECT query>",
+  "clarification": "<empty string if no substitutions; otherwise explain what term was substituted and why>"
+}}
+
+JSON:"""
 
     response = llm.invoke(prompt)
-    state["sql"] = _clean_sql(response.content)
+
+    try:
+        parsed = json.loads(_extract_json(response.content))
+        state["sql"] = _clean_sql(parsed.get("sql", ""))
+        state["clarification"] = parsed.get("clarification", "")
+    except Exception:
+        # Fallback: treat entire response as SQL
+        state["sql"] = _clean_sql(response.content)
+        state["clarification"] = ""
+
     return state
 
 
@@ -163,7 +180,6 @@ def execute_sql_node(state: AgentState) -> AgentState:
                 insert_pos = idx
         return query[:insert_pos].rstrip() + f" WHERE {company_filter} " + query[insert_pos:]
 
-    # Handle UNION — inject filter into each SELECT part
     parts = state["sql"].rstrip(";").split("UNION")
     sql = " UNION ".join(inject_filter(p.strip()) for p in parts)
 
@@ -183,7 +199,9 @@ def format_answer(state: AgentState) -> AgentState:
     if state["plan"] == "history":
         prompt = f"""{history_ctx}Question: {state['question']}
 
-Answer this question using only the conversation history above. Be concise and direct. Respond in the same language as the question (Georgian or English)."""
+Answer this question using only the conversation history above. Be concise and direct.
+- If the question asks to exclude or deduct something (e.g. "without X"), calculate it from the numbers in history.
+- Respond in the same language as the question (Georgian or English)."""
         response = llm.invoke(prompt)
         state["answer"] = response.content.strip()
         return state
@@ -192,11 +210,16 @@ Answer this question using only the conversation history above. Be concise and d
         state["answer"] = state.get("error") or "Could not answer the question with the available data."
         return state
 
-    prompt = f"""{history_ctx}Current question: {state['question']}
+    clarification_ctx = f"Note about query: {state['clarification']}\n" if state["clarification"] else ""
+
+    prompt = f"""{history_ctx}{clarification_ctx}Current question: {state['question']}
 Results: {json.dumps(state['rows'][:10], default=str, ensure_ascii=False)}
 
-Answer the current question clearly and concisely based on the results.
-Give a short, direct answer in the same language as the question (Georgian or English). Do not translate Georgian values in the results — use them as-is when referencing them."""
+Answer the current question clearly and concisely based on the results. Follow these rules:
+- If a substitution was made (see note above), start with: "I couldn't find '[original term]', but found '[substituted term]', so:"
+- If results contain multiple subcategories that together answer the question, list each one with its value, then provide the total. Example: "Your revenues include: Sales ($X), Services ($Y), Tech ($Z). Total: $W."
+- Do not translate Georgian values — use them as-is.
+- Respond in the same language as the question (Georgian or English)."""
 
     response = llm.invoke(prompt)
     state["answer"] = response.content.strip()
@@ -244,6 +267,7 @@ def run(company_id: str, question: str, history: list = []) -> dict:
         "metadata": load_metadata(company_id),
         "schema": {},
         "sql": "",
+        "clarification": "",
         "valid": False,
         "rows": [],
         "answer": "",
