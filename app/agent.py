@@ -62,7 +62,14 @@ def planner(state: AgentState) -> AgentState:
 
     prompt = f"""{history_ctx}New question: {state['question']}
 
-The question may be in Georgian or English. Can it be fully and accurately answered using only the conversation history above, without querying the database?
+The question may be in Georgian or English.
+
+Reply DATABASE if any of these are true:
+- The question asks for data, calculations, aggregations, or breakdowns not already in the history
+- The question involves a time period, grouping, or filter not previously computed
+- The exact numbers needed are not already stated in the history
+
+Reply HISTORY only if the answer can be derived purely by arithmetic or rephrasing from numbers already stated in the history.
 
 Reply with only DATABASE or HISTORY."""
 
@@ -79,6 +86,8 @@ def select_schema(state: AgentState) -> AgentState:
     prompt = f"""{history_ctx}Current question: {state['question']}
 
 You are a database expert. The question and data may be in Georgian. Identify the minimum tables and columns needed to answer the current question (use conversation history only to understand references like "that", "it", "the same" or their Georgian equivalents).
+
+Important: If the question asks for "main", "biggest", "top", "most", "largest", or their Georgian equivalents (მთავარი, ყველაზე დიდი, etc.), include ALL breakdown/grouping columns (subcategory, department, description, etc.) so the answer can identify which specific item ranks highest.
 
 Available schema:
 {json.dumps(tables, ensure_ascii=False)}
@@ -120,9 +129,11 @@ Schema: {json.dumps(state['schema'], ensure_ascii=False)}
 STRICT RULES:
 - Use ONLY column names that exist in the schema. NEVER invent column names.
 - Use ONLY values from the sample values lists. Copy them character-for-character — including Georgian script. NEVER translate, transliterate, or rephrase values.
-- If the user's term does not exactly match any schema value but is clearly a typo or synonym (e.g. "xpnses" → "expense", "income" → "revenue"), use the closest schema value and record the substitution.
+- If the user typed a specific word intending it as a WHERE filter value (e.g. "show me xpnses" → they meant the value 'expense'; "income" → they meant the value 'revenue') but it doesn't exactly match any schema sample value, use the closest schema value in the WHERE clause and set clarification to explain the substitution (e.g. "User said 'xpnses', used 'expense' instead").
+- Leave clarification EMPTY ("") for ALL other cases: conceptual questions ("main expense", "biggest cost", "top revenue", "მთავარი ხარჯი"), general aggregations, time-based questions, comparisons. These are semantic questions, not value lookups.
 - For general questions (e.g. "how much revenue"), include ALL matching subcategories using GROUP BY — never filter to just one.
 - For comparisons, use GROUP BY or CASE WHEN — never UNION.
+- For time-based grouping ("by week", "by month", "by year", "კვირის ჭრილში", "თვის ჭრილში"), use GROUP BY DATE_TRUNC(...) to show ALL periods — never filter to a single hardcoded date. If the date column type is 'text', cast it: DATE_TRUNC('week', date_column::date). Example: SELECT DATE_TRUNC('week', date::date) AS week, SUM(amount) FROM t GROUP BY week ORDER BY week.
 - Use conversation history only to resolve references like "them", "it", "same".
 
 Reply with this JSON:
