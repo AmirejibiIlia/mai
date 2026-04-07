@@ -31,7 +31,8 @@ def load_metadata(company_id: str) -> Dict:
         row = result.fetchone()
         if not row:
             raise CompanyNotFoundError(company_id)
-        return json.loads(row[0])
+        data = row[0]
+        return data if isinstance(data, dict) else json.loads(data)
 
 def execute_query(sql: str, timeout: int = None) -> List[Dict]:
     with get_db() as conn:
