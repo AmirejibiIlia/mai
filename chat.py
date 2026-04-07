@@ -1,6 +1,6 @@
 import requests
 
-API_URL = "https://mai-production-xxxx.up.railway.app/query"
+API_URL = "https://mai-production-cff7.up.railway.app/query"
 
 def ask(company_id: str, question: str):
     response = requests.post(

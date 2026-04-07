@@ -52,13 +52,22 @@ def execute_sql_node(state: AgentState) -> AgentState:
         state["rows"] = []
         return state
     
-    sql = state["sql"]
+    sql = state["sql"].rstrip(";")
     company_filter = state["metadata"]["company_filter"]
-    
-    if "WHERE" in sql.upper():
-        sql = sql.replace("WHERE", f"WHERE {company_filter} AND", 1)
+
+    # Find where WHERE/GROUP BY/ORDER BY/LIMIT/HAVING starts to inject filter safely
+    sql_upper = sql.upper()
+    clause_keywords = ["GROUP BY", "ORDER BY", "LIMIT", "HAVING"]
+
+    if "WHERE" in sql_upper:
+        sql = sql.replace(sql[sql_upper.index("WHERE"):sql_upper.index("WHERE")+5], f"WHERE {company_filter} AND", 1)
     else:
-        sql = sql.rstrip(";") + f" WHERE {company_filter}"
+        insert_pos = len(sql)
+        for kw in clause_keywords:
+            idx = sql_upper.find(kw)
+            if idx != -1 and idx < insert_pos:
+                insert_pos = idx
+        sql = sql[:insert_pos].rstrip() + f" WHERE {company_filter} " + sql[insert_pos:]
     
     try:
         state["rows"] = execute_query(sql, settings.QUERY_TIMEOUT)
