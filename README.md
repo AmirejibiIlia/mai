@@ -1,25 +1,68 @@
-# AI SQL Agent - Production
+# mai — AI SQL Agent
 
-Multi-tenant agentic SQL system with LangGraph.
+Multi-tenant agentic system that answers natural language questions by querying your database.
 
-## Features
-- Multi-agent SQL generation & validation
-- Company-level data isolation
-- Configurable timeouts & limits
-- Error handling & logging
-- Production-ready architecture
+## How it works
 
-## Deploy
+1. **Schema selection** — picks only the relevant tables/columns for the question
+2. **SQL generation** — writes an efficient SELECT query
+3. **Validation** — verifies the query answers what was asked
+4. **Execution** — runs the query with company-level data isolation
+5. **Answer** — returns a concise natural language response
+
+## Setup
+
+### 1. Environment variables
+
+Create a `.env` file:
+```
+DATABASE_URL=postgresql://user:password@host:port/dbname
+GROQ_API_KEY=your_groq_api_key
+```
+
+### 2. Build metadata
+
+Run once after connecting your database (or after schema changes):
 ```bash
-git push && railway up
+python metadata_builder.py
+```
+
+### 3. Upload sample data (optional)
+
+```bash
+python data/upload_data.py
+```
+
+## Deploy (Railway)
+
+```bash
+git push
 ```
 
 ## Usage
+
 ```bash
-curl -G -X POST "https://api.railway.app/query" \
+curl -X POST "https://your-app.up.railway.app/query" \
+  -G \
   --data-urlencode "company_id=Amadeo" \
-  --data-urlencode "question=Total revenue?"
+  --data-urlencode "question=What is total revenue?"
 ```
 
-## Environment
-See `.env.example`
+Response:
+```json
+{
+  "company_id": "Amadeo",
+  "answer": "The total revenue is $245,000.",
+  "sql": "SELECT SUM(amount) FROM mastertable WHERE type = 'income'",
+  "valid": true,
+  "rows": 1
+}
+```
+
+## Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/` | Health check |
+| GET | `/companies` | List all companies |
+| POST | `/query` | Ask a question |

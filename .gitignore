@@ -1,0 +1,4 @@
+.env
+mai_env/
+__pycache__/
+*.pyc

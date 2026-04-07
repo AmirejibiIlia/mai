@@ -1,0 +1,42 @@
+date;category;subcategory;amount;type;description;department;company_id
+2025-01-05;Revenue;Product Sales;125000.00;income;Q1 software license sales;Sales;Retain
+2025-01-12;Revenue;Service Fees;45000.00;income;Consulting engagement - Acme Corp;Services;Retain
+2025-01-15;Expense;Salaries;320000.00;expense;January payroll;HR;Retain
+2025-01-18;Expense;Cloud Infrastructure;28500.00;expense;AWS monthly bill;Engineering;Retain
+2025-01-20;Revenue;Product Sales;89000.00;income;Enterprise license - Beta Inc;Sales;Retain
+2025-01-25;Expense;Marketing;15000.00;expense;Google Ads campaign;Marketing;Retain
+2025-01-28;Expense;Office Rent;22000.00;expense;January office lease;Operations;Retain
+2025-01-31;Expense;Software Subscriptions;8500.00;expense;SaaS tools monthly;Engineering;Retain
+2025-02-03;Revenue;Product Sales;134000.00;income;Q1 bulk license deal;Sales;GeoGPS
+2025-02-08;Revenue;Service Fees;62000.00;income;Implementation services - Gamma LLC;Services;GeoGPS
+2025-02-10;Expense;Salaries;320000.00;expense;February payroll;HR;GeoGPS
+2025-02-14;Expense;Travel;12000.00;expense;Sales team conference travel;Sales;GeoGPS
+2025-02-18;Revenue;Subscriptions;78000.00;income;Monthly SaaS recurring revenue;Sales;GeoGPS
+2025-02-20;Expense;Cloud Infrastructure;31000.00;expense;AWS + GCP monthly bill;Engineering;GeoGPS
+2025-02-22;Expense;Marketing;22000.00;expense;Trade show sponsorship;Marketing;GeoGPS
+2025-02-25;Revenue;Product Sales;96000.00;income;Mid-market deal - Delta Co;Sales;GeoGPS
+2025-02-28;Expense;Office Rent;22000.00;expense;February office lease;Operations;GeoGPS
+2025-03-02;Revenue;Service Fees;55000.00;income;Training services - Epsilon Ltd;Services;GeoGPS
+2025-03-05;Revenue;Product Sales;210000.00;income;Enterprise deal - Zeta Corp;Sales;GeoGPS
+2025-03-08;Expense;Salaries;325000.00;expense;March payroll + bonus;HR;GeoGPS
+2025-03-10;Expense;Equipment;45000.00;expense;New developer laptops;Engineering;Amadeo
+2025-03-12;Revenue;Subscriptions;82000.00;income;Monthly SaaS recurring revenue;Sales;Amadeo
+2025-03-15;Expense;Cloud Infrastructure;29000.00;expense;AWS monthly bill;Engineering;Amadeo
+2025-03-18;Revenue;Product Sales;115000.00;income;License renewal - Eta Inc;Sales;Amadeo
+2025-03-20;Expense;Marketing;35000.00;expense;Q1 brand campaign;Marketing;Amadeo
+2025-03-22;Expense;Legal;18000.00;expense;Contract review and IP filing;Legal;Amadeo
+2025-03-25;Revenue;Service Fees;48000.00;income;Consulting - Theta Corp;Services;Amadeo
+2025-03-28;Expense;Office Rent;22000.00;expense;March office lease;Operations;Phubber
+2025-03-31;Expense;Insurance;9500.00;expense;Quarterly D&O insurance;Operations;Phubber
+2025-04-02;Revenue;Product Sales;142000.00;income;Q2 opening deal - Iota LLC;Sales;Phubber
+2025-04-05;Revenue;Subscriptions;86000.00;income;Monthly SaaS recurring revenue;Sales;Phubber
+2025-04-08;Expense;Salaries;325000.00;expense;April payroll;HR;Phubber
+2025-04-10;Expense;Cloud Infrastructure;33000.00;expense;Scaling infrastructure costs;Engineering;Phubber
+2025-04-12;Revenue;Service Fees;71000.00;income;Migration services - Kappa Co;Services;Phubber
+2025-04-15;Expense;Marketing;28000.00;expense;Content marketing + SEO;Marketing;Phubber
+2025-04-18;Revenue;Product Sales;98000.00;income;SMB bundle sales;Sales;Phubber
+2025-04-20;Expense;Travel;8500.00;expense;Customer visit travel;Sales;Phubber
+2025-04-22;Expense;Software Subscriptions;9200.00;expense;SaaS tools monthly + new tool;Engineering;Phubber
+2025-04-25;Revenue;Product Sales;167000.00;income;Enterprise expansion - Lambda Inc;Sales;Retain
+2025-04-28;Expense;Office Rent;22000.00;expense;April office lease;Operations;Retain
+2025-04-30;Expense;Recruiting;15000.00;expense;Q2 recruiting fees;HR;Retain
